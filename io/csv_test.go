@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LuizCdosSantos/goframe/dataframe"
 	goio "github.com/LuizCdosSantos/goframe/io"
@@ -390,6 +391,113 @@ func TestWriteCSV_BoolAndIntColumns(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "true") || !strings.Contains(out, "false") {
 		t.Errorf("bool values not written correctly: %q", out)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DateTime inference
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestReadCSV_DateTimeRFC3339(t *testing.T) {
+	csv := "event,ts\nlogin,2024-06-15T12:30:00Z\nlogout,2024-06-15T13:00:00Z\n"
+	df, err := goio.ReadCSV(strings.NewReader(csv), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	v := df.MustCol("ts").ILoc(0)
+	got, ok := v.AsDateTime()
+	if !ok {
+		t.Fatalf("ts[0] should be KindDateTime, got kind %v", v.Kind)
+	}
+	want := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("ts[0] = %v, want %v", got, want)
+	}
+}
+
+func TestReadCSV_DateTimeNoTZ(t *testing.T) {
+	csv := "ts\n2024-01-01T08:00:00\n2024-01-02T09:00:00\n"
+	df, err := goio.ReadCSV(strings.NewReader(csv), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	v := df.MustCol("ts").ILoc(0)
+	if _, ok := v.AsDateTime(); !ok {
+		t.Errorf("ts[0] should be KindDateTime, got kind %v", v.Kind)
+	}
+}
+
+func TestReadCSV_DateOnly(t *testing.T) {
+	csv := "date\n2024-01-01\n2024-12-31\n"
+	df, err := goio.ReadCSV(strings.NewReader(csv), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	v := df.MustCol("date").ILoc(0)
+	if _, ok := v.AsDateTime(); !ok {
+		t.Errorf("date[0] should be KindDateTime, got kind %v", v.Kind)
+	}
+}
+
+func TestReadCSV_DateTimeWithNulls(t *testing.T) {
+	csv := "ts\n2024-06-15T12:00:00Z\nNA\n2024-06-16T12:00:00Z\n"
+	df, err := goio.ReadCSV(strings.NewReader(csv), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !df.MustCol("ts").ILoc(1).IsNull() {
+		t.Errorf("NA in datetime column should be null, got %v", df.MustCol("ts").ILoc(1))
+	}
+	if _, ok := df.MustCol("ts").ILoc(0).AsDateTime(); !ok {
+		t.Errorf("ts[0] should be KindDateTime")
+	}
+}
+
+func TestWriteCSV_DateTime(t *testing.T) {
+	ts := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+	s := series.New([]types.Value{types.DateTime(ts), types.Null()}, "ts")
+	df, err := dataframe.New(map[string]*series.Series{"ts": s}, []string{"ts"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := goio.WriteCSV(df, &buf, &goio.WriteCSVOptions{NullValue: "NA"}); err != nil {
+		t.Fatalf("WriteCSV: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "2024-06-15T12:30:00Z") {
+		t.Errorf("datetime not serialized correctly, got: %q", out)
+	}
+	if !strings.Contains(out, "NA") {
+		t.Errorf("null datetime should write as NA, got: %q", out)
+	}
+}
+
+func TestReadCSV_DateTimeRoundTrip(t *testing.T) {
+	ts1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+	s := series.New([]types.Value{types.DateTime(ts1), types.DateTime(ts2)}, "ts")
+	df, err := dataframe.New(map[string]*series.Series{"ts": s}, []string{"ts"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := goio.WriteCSV(df, &buf, nil); err != nil {
+		t.Fatalf("WriteCSV: %v", err)
+	}
+
+	df2, err := goio.ReadCSV(strings.NewReader(buf.String()), nil)
+	if err != nil {
+		t.Fatalf("ReadCSV round-trip: %v", err)
+	}
+
+	got, ok := df2.MustCol("ts").ILoc(0).AsDateTime()
+	if !ok {
+		t.Fatal("round-trip ts[0] should be KindDateTime")
+	}
+	if !got.Equal(ts1) {
+		t.Errorf("round-trip ts[0] = %v, want %v", got, ts1)
 	}
 }
 

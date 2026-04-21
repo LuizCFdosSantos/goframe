@@ -72,6 +72,7 @@ The module has **zero external dependencies**. Everything — type inference, ha
 | Float | `float64` | `KindFloat` |
 | String | `string` | `KindString` |
 | Bool | `bool` | `KindBool` |
+| DateTime | `time.Time` | `KindDateTime` |
 
 ### Why a Tagged Union Instead of `interface{}`
 
@@ -84,7 +85,7 @@ Go's `interface{}` (or `any`) is the idiomatic catch-all type. However, this des
 ### Data Structure
 
 ```go
-type Kind uint8
+type Kind int
 
 const (
     KindNull Kind = iota
@@ -92,14 +93,16 @@ const (
     KindFloat
     KindString
     KindBool
+    KindDateTime
 )
 
 type Value struct {
-    kind    Kind
+    Kind    Kind
     intVal  int64
     fltVal  float64
     strVal  string
     boolVal bool
+    timeVal time.Time
 }
 ```
 
@@ -108,11 +111,12 @@ Memory layout: approximately 49 bytes per Value on a 64-bit system (1 byte kind 
 ### Constructors
 
 ```go
-func Null() Value               // KindNull
-func Int(v int64) Value         // KindInt
-func Float(v float64) Value     // KindFloat
-func Str(v string) Value        // KindString
-func Bool(v bool) Value         // KindBool
+func Null() Value                    // KindNull
+func Int(v int64) Value              // KindInt
+func Float(v float64) Value          // KindFloat
+func Str(v string) Value             // KindString
+func Bool(v bool) Value              // KindBool
+func DateTime(v time.Time) Value     // KindDateTime
 ```
 
 Each constructor sets the `kind` field and exactly one storage field; all others remain zero.
@@ -124,6 +128,7 @@ func (v Value) AsInt() (int64, bool)
 func (v Value) AsFloat() (float64, bool)
 func (v Value) AsString() (string, bool)
 func (v Value) AsBool() (bool, bool)
+func (v Value) AsDateTime() (time.Time, bool)
 ```
 
 The second return value is `true` only when the kind matches. This mirrors how Go's type assertions and map lookups work, making callers check before using the value:
@@ -762,8 +767,9 @@ When `InferTypes` is true, each column's values are parsed in this priority orde
 1. **Null check**: if the string is in `NullValues`, produce `Null()`.
 2. **int64**: try `strconv.ParseInt`. If successful, `Int(v)`.
 3. **float64**: try `strconv.ParseFloat`. If successful, `Float(v)`.
-4. **bool**: try `strconv.ParseBool` (accepts `"true"`, `"false"`, `"1"`, `"0"`, etc.). If successful, `Bool(v)`.
-5. **string**: fallback, always succeeds. `Str(v)`.
+4. **datetime64**: try parsing with `time.Parse` against several layouts (RFC3339, `"2006-01-02T15:04:05"`, `"2006-01-02 15:04:05"`, `"2006-01-02"`). If successful, `DateTime(v)`. DateTime is probed before bool because date strings would never parse as bool but the reverse is not true.
+5. **bool**: try `strconv.ParseBool` (accepts `"true"`, `"false"`, `"1"`, `"0"`, etc.). If successful, `Bool(v)`.
+6. **string**: fallback, always succeeds. `Str(v)`.
 
 This is done per-value, so a column can contain a mix of types if the CSV data is inconsistent. The Series `Dtype()` will then reflect the dominant kind.
 
@@ -922,6 +928,7 @@ A runnable demonstration of the full library API. Covers:
 8. **Describe**: summary statistics table.
 9. **Corr**: correlation matrix of numeric columns.
 10. **CSV round-trip**: write then read a DataFrame.
+11. **DateTime**: constructing datetime Series, sorting by timestamp, CSV round-trip with re-inference.
 
 This file is the best starting point for understanding the API in action.
 
@@ -975,10 +982,10 @@ The library follows SQL/pandas null semantics throughout:
 | Feature | goframe | pandas |
 |---------|---------|--------|
 | Storage | Row-oriented `[]Value` | NumPy columnar arrays |
-| Type system | 5 kinds (null, int, float, string, bool) | 20+ dtypes (int8…int64, datetime, category, …) |
+| Type system | 6 kinds (null, int, float, string, bool, datetime) | 20+ dtypes (int8…int64, datetime, category, …) |
 | Performance | Pure Go loops | SIMD via C/NumPy |
 | Index alignment | Manual (not automatic) | Automatic on arithmetic |
-| DateTime support | Not implemented | Full datetime64 |
+| DateTime support | `KindDateTime` (`time.Time`), CSV inference, RFC3339 serialization | Full datetime64 |
 | MultiIndex | Not implemented | Supported |
 | Plotting | Not implemented | matplotlib integration |
 | Missing values | `KindNull` value | `NaN` / `pd.NA` |
