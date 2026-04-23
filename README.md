@@ -7,7 +7,7 @@ A complete, production-quality implementation of pandas' core concepts in Go, wi
 ```
 goframe/
 ├── types/
-│   ├── value.go       # Tagged-union Value type (int, float, string, bool, null)
+│   ├── value.go       # Tagged-union Value type (int, float, string, bool, datetime, null)
 │   └── index.go       # Row label Index
 ├── series/
 │   └── series.go      # 1D labeled array (equivalent to pd.Series)
@@ -35,15 +35,22 @@ v1 := types.Int(42)
 v2 := types.Float(3.14)
 v3 := types.Str("hello")
 v4 := types.Bool(true)
-v5 := types.Null()  // missing data
+v5 := types.Null()                              // missing data
+v6 := types.DateTime(time.Date(2024, 6, 15,
+        12, 30, 0, 0, time.UTC))               // date-time
 
 // Type-safe access with "comma ok" pattern
 if n, ok := v1.AsInt(); ok {
     fmt.Println("Int:", n)  // → 42
 }
+if ts, ok := v6.AsDateTime(); ok {
+    fmt.Println("Year:", ts.Year())  // → 2024
+}
 
 // Universal coercion to float64 for numeric operations
 f, err := v1.ToFloat64()  // → 42.0, nil
+// DateTime coerces to Unix timestamp
+f, err = v6.ToFloat64()   // → 1718451000.0, nil
 ```
 
 **Why not `interface{}`?** Using `interface{}` (Go's `any`) means type assertions everywhere, no compile-time exhaustiveness checking, and GC pressure from heap-allocated boxed values. Our tagged union gives us a closed set of types and fast switch statements.
@@ -207,7 +214,7 @@ err = goio.WriteCSVFile(df, "output.csv", &goio.WriteCSVOptions{
 })
 ```
 
-**Type inference**: Reads all CSV values as strings, then for each column tries (in order): int64 → float64 → bool → string. Falls back to string if any value doesn't parse.
+**Type inference**: Reads all CSV values as strings, then for each column tries (in order): int64 → float64 → datetime64 → bool → string. DateTime values are written as RFC3339 and re-inferred automatically on read. Falls back to string if no type matches.
 
 ---
 
@@ -284,8 +291,8 @@ unique := s.Unique()
 | Feature | goframe | pandas |
 |---|---|---|
 | Storage | Row-oriented `[]Value` | Columnar numpy arrays (much faster) |
-| Dtype system | 5 types | 20+ numpy dtypes |
-| DateTime support | ❌ | ✅ |
+| Dtype system | 6 types | 20+ numpy dtypes |
+| DateTime support | ✅ (RFC3339, date-only, CSV inference) | ✅ |
 | MultiIndex | ❌ | ✅ |
 | Plotting | ❌ | ✅ (matplotlib) |
 | Vectorized ops | ❌ (pure Go loops) | ✅ (SIMD via numpy/C) |

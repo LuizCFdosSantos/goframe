@@ -30,6 +30,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LuizCdosSantos/goframe/dataframe"
 	"github.com/LuizCdosSantos/goframe/series"
@@ -212,22 +213,22 @@ func ReadCSV(r io.Reader, opts *ReadCSVOptions) (*dataframe.DataFrame, error) {
 //     value fails, the column can't be that type.
 //  2. Convert pass: once we know the type, convert all values.
 //
-// Type priority: int64 > float64 > bool > string
+// Type priority: int64 > float64 > datetime64 > bool > string
 // (We try the most specific type first and fall back as needed.)
 func inferSeries(name string, strs []string, nulls map[string]bool) *series.Series {
-	// Probe for int64
 	if canBeInt(strs, nulls) {
 		return parseIntSeries(name, strs, nulls)
 	}
-	// Probe for float64
 	if canBeFloat(strs, nulls) {
 		return parseFloatSeries(name, strs, nulls)
 	}
-	// Probe for bool
+	// datetime before bool — date strings won't parse as bool
+	if canBeDateTime(strs, nulls) {
+		return parseDateTimeSeries(name, strs, nulls)
+	}
 	if canBeBool(strs, nulls) {
 		return parseBoolSeries(name, strs, nulls)
 	}
-	// Fall back to string
 	return parseStringSeries(name, strs, nulls)
 }
 
@@ -270,6 +271,50 @@ func canBeBool(strs []string, nulls map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+// datetimeLayouts lists formats tried in order when inferring datetime columns.
+var datetimeLayouts = []string{
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04:05",
+	"2006-01-02",
+}
+
+func canBeDateTime(strs []string, nulls map[string]bool) bool {
+	for _, s := range strs {
+		if nulls[s] {
+			continue
+		}
+		parsed := false
+		for _, layout := range datetimeLayouts {
+			if _, err := time.Parse(layout, s); err == nil {
+				parsed = true
+				break
+			}
+		}
+		if !parsed {
+			return false
+		}
+	}
+	return true
+}
+
+func parseDateTimeSeries(name string, strs []string, nulls map[string]bool) *series.Series {
+	vals := make([]types.Value, len(strs))
+	for i, s := range strs {
+		if nulls[s] {
+			vals[i] = types.Null()
+			continue
+		}
+		for _, layout := range datetimeLayouts {
+			if t, err := time.Parse(layout, s); err == nil {
+				vals[i] = types.DateTime(t)
+				break
+			}
+		}
+	}
+	return series.New(vals, name)
 }
 
 func parseIntSeries(name string, strs []string, nulls map[string]bool) *series.Series {

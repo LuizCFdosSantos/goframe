@@ -3,6 +3,7 @@ package types_test
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/LuizCdosSantos/goframe/types"
 )
@@ -21,6 +22,7 @@ func TestKindString(t *testing.T) {
 		{types.KindFloat, "float64"},
 		{types.KindString, "object"},
 		{types.KindBool, "bool"},
+		{types.KindDateTime, "datetime64"},
 		{types.Kind(99), "unknown(99)"},
 	}
 	for _, c := range cases {
@@ -99,6 +101,54 @@ func TestBool(t *testing.T) {
 	}
 }
 
+func TestDateTime(t *testing.T) {
+	ts := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
+	v := types.DateTime(ts)
+
+	got, ok := v.AsDateTime()
+	if !ok {
+		t.Fatal("DateTime().AsDateTime() returned ok=false")
+	}
+	if !got.Equal(ts) {
+		t.Errorf("AsDateTime() = %v, want %v", got, ts)
+	}
+	if v.Kind != types.KindDateTime {
+		t.Errorf("Kind = %v, want KindDateTime", v.Kind)
+	}
+	if v.IsNull() {
+		t.Error("DateTime value should not be null")
+	}
+
+	// wrong-kind accessors must return false
+	if _, ok := v.AsInt(); ok {
+		t.Error("DateTime should not be accessible via AsInt")
+	}
+	if _, ok := v.AsFloat(); ok {
+		t.Error("DateTime should not be accessible via AsFloat")
+	}
+	if _, ok := v.AsString(); ok {
+		t.Error("DateTime should not be accessible via AsString")
+	}
+	if _, ok := v.AsBool(); ok {
+		t.Error("DateTime should not be accessible via AsBool")
+	}
+}
+
+func TestAsDateTime_WrongKind(t *testing.T) {
+	cases := []types.Value{
+		types.Null(),
+		types.Int(1),
+		types.Float(1.0),
+		types.Str("2024-01-01"),
+		types.Bool(true),
+	}
+	for _, v := range cases {
+		if _, ok := v.AsDateTime(); ok {
+			t.Errorf("AsDateTime() on %v (kind %v) should return ok=false", v, v.Kind)
+		}
+	}
+}
+
 func TestIsNull_NonNull(t *testing.T) {
 	if types.Int(1).IsNull() {
 		t.Error("Int(1).IsNull() should be false")
@@ -170,11 +220,23 @@ func TestToFloat64_StringInvalid(t *testing.T) {
 	}
 }
 
+func TestToFloat64_DateTime(t *testing.T) {
+	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	f, err := types.DateTime(ts).ToFloat64()
+	if err != nil {
+		t.Fatalf("DateTime.ToFloat64() unexpected error: %v", err)
+	}
+	if f != float64(ts.Unix()) {
+		t.Errorf("DateTime.ToFloat64() = %f, want %f", f, float64(ts.Unix()))
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Value.String tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestValueString(t *testing.T) {
+	ts := time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)
 	cases := []struct {
 		v    types.Value
 		want string
@@ -185,6 +247,7 @@ func TestValueString(t *testing.T) {
 		{types.Str("hello"), "hello"},
 		{types.Bool(true), "true"},
 		{types.Bool(false), "false"},
+		{types.DateTime(ts), "2024-06-15T12:30:00Z"},
 	}
 	for _, c := range cases {
 		if got := c.v.String(); got != c.want {
@@ -221,6 +284,21 @@ func TestEqual_SameKind(t *testing.T) {
 	}
 	if types.Bool(true).Equal(types.Bool(false)) {
 		t.Error("Bool(true) == Bool(false) should be false")
+	}
+}
+
+func TestEqual_DateTime(t *testing.T) {
+	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	if !types.DateTime(ts).Equal(types.DateTime(ts)) {
+		t.Error("DateTime(ts) == DateTime(ts) should be true")
+	}
+	if types.DateTime(ts).Equal(types.DateTime(ts2)) {
+		t.Error("DateTime(ts) == DateTime(ts2) should be false")
+	}
+	if types.DateTime(ts).Equal(types.Int(0)) {
+		t.Error("DateTime == Int should be false (different kinds)")
 	}
 }
 
@@ -284,6 +362,21 @@ func TestLessThan_IntFloat_Promotion(t *testing.T) {
 	// Mixed int/float: promoted to float for comparison
 	if !types.Int(1).LessThan(types.Float(2.0)) {
 		t.Error("Int(1) < Float(2.0) should be true via promotion")
+	}
+}
+
+func TestLessThan_DateTime(t *testing.T) {
+	earlier := types.DateTime(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	later := types.DateTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	if !earlier.LessThan(later) {
+		t.Error("earlier < later should be true")
+	}
+	if later.LessThan(earlier) {
+		t.Error("later < earlier should be false")
+	}
+	if earlier.LessThan(earlier) {
+		t.Error("equal datetimes: LessThan should be false")
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 )
 
 // Kind represents which data type a Value holds.
@@ -54,6 +55,9 @@ const (
 
 	// KindBool represents a boolean true/false value.
 	KindBool
+
+	// KindDateTime represents a date-time value (time.Time).
+	KindDateTime
 )
 
 // String returns a human-readable name for the Kind — used in error messages
@@ -70,6 +74,8 @@ func (k Kind) String() string {
 		return "object" // pandas calls string columns "object" dtype
 	case KindBool:
 		return "bool"
+	case KindDateTime:
+		return "datetime64"
 	default:
 		return fmt.Sprintf("unknown(%d)", int(k))
 	}
@@ -102,6 +108,7 @@ type Value struct {
 	fltVal  float64
 	strVal  string
 	boolVal bool
+	timeVal time.Time
 }
 
 // --- Constructors ---
@@ -134,6 +141,11 @@ func Str(v string) Value {
 // Bool wraps a bool in a Value.
 func Bool(v bool) Value {
 	return Value{Kind: KindBool, boolVal: v}
+}
+
+// DateTime wraps a time.Time in a Value.
+func DateTime(v time.Time) Value {
+	return Value{Kind: KindDateTime, timeVal: v}
 }
 
 // --- Accessors ---
@@ -174,6 +186,14 @@ func (v Value) AsBool() (bool, bool) {
 	return v.boolVal, true
 }
 
+// AsDateTime returns the time value and true if Kind == KindDateTime.
+func (v Value) AsDateTime() (time.Time, bool) {
+	if v.Kind != KindDateTime {
+		return time.Time{}, false
+	}
+	return v.timeVal, true
+}
+
 // IsNull returns true if this Value represents missing data.
 func (v Value) IsNull() bool {
 	return v.Kind == KindNull
@@ -212,6 +232,8 @@ func (v Value) ToFloat64() (float64, error) {
 			return 0, fmt.Errorf("cannot convert string %q to float64: %w", v.strVal, err)
 		}
 		return f, nil
+	case KindDateTime:
+		return float64(v.timeVal.Unix()), nil
 	default:
 		return 0, fmt.Errorf("unknown Kind %d", v.Kind)
 	}
@@ -234,6 +256,8 @@ func (v Value) String() string {
 			return "true"
 		}
 		return "false"
+	case KindDateTime:
+		return v.timeVal.Format(time.RFC3339)
 	default:
 		return "<unknown>"
 	}
@@ -262,6 +286,8 @@ func (v Value) Equal(other Value) bool {
 		return v.strVal == other.strVal
 	case KindBool:
 		return v.boolVal == other.boolVal
+	case KindDateTime:
+		return v.timeVal.Equal(other.timeVal)
 	}
 	return false
 }
@@ -289,6 +315,8 @@ func (v Value) LessThan(other Value) bool {
 	case KindBool:
 		// false < true
 		return !v.boolVal && other.boolVal
+	case KindDateTime:
+		return v.timeVal.Before(other.timeVal)
 	default:
 		panic(fmt.Sprintf("type %s is not orderable", v.Kind))
 	}

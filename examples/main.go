@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"time"
 
 	"github.com/LuizCdosSantos/goframe/dataframe"
 	goio "github.com/LuizCdosSantos/goframe/io"
@@ -33,6 +34,7 @@ func main() {
 	example6_NullHandling()
 	example7_Statistics()
 	example8_CSV()
+	example9_DateTime()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -431,6 +433,69 @@ func example8_CSV() {
 
 	fmt.Println("Loaded from TSV (tab-delimited):")
 	fmt.Println(loaded2)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Example 9: DateTime type
+// ─────────────────────────────────────────────────────────────────────────────
+
+func example9_DateTime() {
+	fmt.Println("━━━ Example 9: DateTime ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+
+	// Creating DateTime values manually
+	// pandas: pd.Series(pd.to_datetime(["2024-01-01", "2024-06-15", "2024-12-31"]))
+	dates := series.New([]types.Value{
+		types.DateTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+		types.DateTime(time.Date(2024, 6, 15, 12, 30, 0, 0, time.UTC)),
+		types.DateTime(time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)),
+	}, "event_time")
+
+	fmt.Println("DateTime series:")
+	fmt.Println(dates)
+
+	// Accessing a DateTime value
+	v := dates.ILoc(1)
+	if ts, ok := v.AsDateTime(); ok {
+		fmt.Printf("event_time[1]: %s (year=%d, month=%s)\n\n", ts.Format(time.RFC3339), ts.Year(), ts.Month())
+	}
+
+	// Build a DataFrame with timestamps and sort by time
+	// pandas: df.sort_values("logged_at")
+	df, err := dataframe.FromMap(map[string]interface{}{
+		"user": []string{"carol", "alice", "bob"},
+		"action": []string{"logout", "login", "login"},
+		"logged_at": []types.Value{
+			types.DateTime(time.Date(2024, 6, 15, 13, 0, 0, 0, time.UTC)),
+			types.DateTime(time.Date(2024, 6, 15, 8, 0, 0, 0, time.UTC)),
+			types.DateTime(time.Date(2024, 6, 15, 9, 30, 0, 0, time.UTC)),
+		},
+	}, []string{"user", "action", "logged_at"})
+	mustOk(err)
+
+	fmt.Println("Event log (unsorted):")
+	fmt.Println(df)
+
+	sorted, err := df.SortBy("logged_at", true)
+	mustOk(err)
+	fmt.Println("Sorted by logged_at (ascending):")
+	fmt.Println(sorted)
+
+	// CSV round-trip: datetime columns are written as RFC3339 and re-inferred on read
+	path := os.TempDir() + "/goframe_events.csv"
+	mustOk(goio.WriteCSVFile(df, path, nil))
+
+	loaded, err := goio.ReadCSVFile(path, nil)
+	mustOk(err)
+	fmt.Println("Loaded from CSV (datetime re-inferred):")
+	fmt.Println(loaded)
+
+	// Confirm the re-loaded column is still KindDateTime
+	v2 := loaded.MustCol("logged_at").ILoc(0)
+	if _, ok := v2.AsDateTime(); ok {
+		fmt.Printf("dtype: %s\n", v2.Kind)
+	}
+	fmt.Println()
 }
 
 // mustOk panics on error — for example simplicity, not production use!
