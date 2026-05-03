@@ -73,6 +73,7 @@ The module has **zero external dependencies**. Everything — type inference, ha
 | String | `string` | `KindString` |
 | Bool | `bool` | `KindBool` |
 | DateTime | `time.Time` | `KindDateTime` |
+| Decimal | `Decimal` (scaled int64, no external deps) | `KindDecimal` |
 
 ### Why a Tagged Union Instead of `interface{}`
 
@@ -117,7 +118,28 @@ func Float(v float64) Value          // KindFloat
 func Str(v string) Value             // KindString
 func Bool(v bool) Value              // KindBool
 func DateTime(v time.Time) Value     // KindDateTime
+func Dec(v Decimal) Value            // KindDecimal
 ```
+
+### Decimal in Numeric Operations
+
+All statistical operations (`Sum`, `Mean`, `Std`, `Min`, `Max`) work on `KindDecimal` Series because they route through `ToFloat64()`, which returns the value as a float64:
+
+```go
+prices := series.New([]types.Value{
+    types.Dec(types.NewDecimal(1500, 2)), // 15.00
+    types.Dec(types.NewDecimal(2000, 2)), // 20.00
+}, "price")
+
+prices.Sum()   // → 35.0
+prices.Mean()  // → 17.5
+prices.Min()   // → 15.0
+prices.Max()   // → 20.0
+```
+
+Decimal columns are also included in `DataFrame.Describe()` and `DataFrame.Corr()`. Sorting via `SortValues` and `SortBy` uses the exact `Decimal` comparison (no float conversion). Filtering via `Gt`, `Lt`, etc. compares against a `float64` threshold.
+
+**Limitation**: element-wise arithmetic (`Add`, `Sub`, `Mul`, `Div`) converts operands to `float64` and returns a `Float` series. The decimal type is not preserved through arithmetic — use `Apply` with `Decimal` arithmetic directly if exact decimal arithmetic is required.
 
 Each constructor sets the `kind` field and exactly one storage field; all others remain zero.
 
@@ -129,6 +151,7 @@ func (v Value) AsFloat() (float64, bool)
 func (v Value) AsString() (string, bool)
 func (v Value) AsBool() (bool, bool)
 func (v Value) AsDateTime() (time.Time, bool)
+func (v Value) AsDecimal() (Decimal, bool)
 ```
 
 The second return value is `true` only when the kind matches. This mirrors how Go's type assertions and map lookups work, making callers check before using the value:
@@ -172,6 +195,69 @@ func (v Value) IsNull() bool { return v.kind == KindNull }
 ```
 
 Simple predicate. The `KindNull` constant is zero, so the zero value of `Value{}` is a null — a deliberate choice so uninitialized values are null, not garbage.
+
+---
+
+## types/decimal.go — The Decimal Type
+
+**Package**: `types`
+
+### Purpose
+
+`Decimal` provides exact decimal arithmetic without any external dependencies. It is a first-class `Value` kind (`KindDecimal`), replacing `float64` when exact representation is required (financial, scientific).
+
+### Why Not float64?
+
+```go
+0.1 + 0.2 == 0.3  // false — float64 gives 0.30000000000000004
+```
+
+`Decimal` stores values as a scaled `int64`:
+
+| Value | Internal representation |
+|-------|------------------------|
+| `15.99` | `{value: 1599, scale: 2}` |
+| `0.001` | `{value: 1, scale: 3}` |
+| `100` | `{value: 100, scale: 0}` |
+
+### Constructors
+
+```go
+func NewDecimal(value int64, scale uint8) Decimal  // NewDecimal(1599, 2) → 15.99
+func ParseDecimal(s string) (Decimal, error)       // ParseDecimal("15.99")
+```
+
+### Arithmetic
+
+```go
+func (d Decimal) Add(other Decimal) Decimal   // exact
+func (d Decimal) Sub(other Decimal) Decimal   // exact
+func (d Decimal) Mul(other Decimal) Decimal   // exact; result scale = a.scale + b.scale
+// Division is intentionally omitted to avoid unbounded scale growth
+```
+
+Operands with different scales are automatically aligned to the higher scale before arithmetic:
+
+```go
+// "1.5" + "1.50" → aligned to scale 2 → "1.50" + "1.50" = "3.00"
+```
+
+### Comparison
+
+```go
+func (d Decimal) Cmp(other Decimal) int   // -1, 0, or 1
+func (d Decimal) Equal(other Decimal) bool
+func (d Decimal) LessThan(other Decimal) bool
+```
+
+Comparison is value-based regardless of scale: `NewDecimal(150, 1).Equal(NewDecimal(1500, 2))` is `true` (both represent 15.0).
+
+### Conversion
+
+```go
+func (d Decimal) String() string        // canonical decimal string: "15.99"
+func (d Decimal) ToFloat64() float64   // approximate; for display and aggregation only
+```
 
 ---
 
@@ -771,6 +857,8 @@ When `InferTypes` is true, each column's values are parsed in this priority orde
 5. **bool**: try `strconv.ParseBool` (accepts `"true"`, `"false"`, `"1"`, `"0"`, etc.). If successful, `Bool(v)`.
 6. **string**: fallback, always succeeds. `Str(v)`.
 
+`KindDecimal` is not auto-inferred from CSV — decimal strings like `"15.99"` are inferred as `float64`. Create `KindDecimal` values explicitly with `types.Dec(types.NewDecimal(...))` or `types.Dec(d)` after calling `types.ParseDecimal`.
+
 This is done per-value, so a column can contain a mix of types if the CSV data is inconsistent. The Series `Dtype()` will then reflect the dominant kind.
 
 ### Reading
@@ -929,6 +1017,7 @@ A runnable demonstration of the full library API. Covers:
 9. **Corr**: correlation matrix of numeric columns.
 10. **CSV round-trip**: write then read a DataFrame.
 11. **DateTime**: constructing datetime Series, sorting by timestamp, CSV round-trip with re-inference.
+12. **Decimal**: exactness proof (0.10 + 0.20 = "0.30"), Decimal Series construction, all aggregations (Sum/Mean/Std/Min/Max), filtering, sorting, Describe, GroupBy, CSV write.
 
 This file is the best starting point for understanding the API in action.
 
@@ -982,7 +1071,7 @@ The library follows SQL/pandas null semantics throughout:
 | Feature | goframe | pandas |
 |---------|---------|--------|
 | Storage | Row-oriented `[]Value` | NumPy columnar arrays |
-| Type system | 6 kinds (null, int, float, string, bool, datetime) | 20+ dtypes (int8…int64, datetime, category, …) |
+| Type system | 7 kinds (null, int, float, string, bool, datetime, decimal) | 20+ dtypes (int8…int64, datetime, category, …) |
 | Performance | Pure Go loops | SIMD via C/NumPy |
 | Index alignment | Manual (not automatic) | Automatic on arithmetic |
 | DateTime support | `KindDateTime` (`time.Time`), CSV inference, RFC3339 serialization | Full datetime64 |

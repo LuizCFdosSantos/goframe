@@ -38,6 +38,7 @@ v4 := types.Bool(true)
 v5 := types.Null()                              // missing data
 v6 := types.DateTime(time.Date(2024, 6, 15,
         12, 30, 0, 0, time.UTC))               // date-time
+v7 := types.Dec(types.NewDecimal(1500, 2)) // 15.00 (exact)
 
 // Type-safe access with "comma ok" pattern
 if n, ok := v1.AsInt(); ok {
@@ -46,6 +47,11 @@ if n, ok := v1.AsInt(); ok {
 if ts, ok := v6.AsDateTime(); ok {
     fmt.Println("Year:", ts.Year())  // → 2024
 }
+if d, ok := v7.AsDecimal(); ok {
+    fmt.Println("Decimal:", d)  // → 15.00
+}
+// Decimal coerces to float64 for numeric aggregations
+f, err = v7.ToFloat64()  // → 15.00, nil
 
 // Universal coercion to float64 for numeric operations
 f, err := v1.ToFloat64()  // → 42.0, nil
@@ -214,7 +220,7 @@ err = goio.WriteCSVFile(df, "output.csv", &goio.WriteCSVOptions{
 })
 ```
 
-**Type inference**: Reads all CSV values as strings, then for each column tries (in order): int64 → float64 → datetime64 → bool → string. DateTime values are written as RFC3339 and re-inferred automatically on read. Falls back to string if no type matches.
+**Type inference**: Reads all CSV values as strings, then for each column tries (in order): int64 → float64 → datetime64 → bool → string. DateTime is serialized as RFC3339 and re-inferred automatically on read. `KindDecimal` columns are written as plain decimal strings (e.g. `"15.00"`) and re-inferred as float64 on read; create them explicitly with `types.Dec()`.
 
 ---
 
@@ -291,7 +297,7 @@ unique := s.Unique()
 | Feature | goframe | pandas |
 |---|---|---|
 | Storage | Row-oriented `[]Value` | Columnar numpy arrays (much faster) |
-| Dtype system | 6 types | 20+ numpy dtypes |
+| Dtype system | 7 types | 20+ numpy dtypes |
 | DateTime support | ✅ (RFC3339, date-only, CSV inference) | ✅ |
 | MultiIndex | ❌ | ✅ |
 | Plotting | ❌ | ✅ (matplotlib) |

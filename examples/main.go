@@ -35,6 +35,7 @@ func main() {
 	example7_Statistics()
 	example8_CSV()
 	example9_DateTime()
+	example10_Decimal()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,6 +496,98 @@ func example9_DateTime() {
 	if _, ok := v2.AsDateTime(); ok {
 		fmt.Printf("dtype: %s\n", v2.Kind)
 	}
+	fmt.Println()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Example 10: Decimal type
+// ─────────────────────────────────────────────────────────────────────────────
+
+func example10_Decimal() {
+	fmt.Println("━━━ Example 10: Decimal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+
+	// 10a: Decimal exactness — the classic 0.1 + 0.2 problem
+	a, _ := types.ParseDecimal("0.10")
+	b, _ := types.ParseDecimal("0.20")
+	fmt.Printf("float64:  0.1 + 0.2 = %.17f\n", 0.1+0.2)
+	fmt.Printf("Decimal:  0.10 + 0.20 = %s  (exact)\n\n", a.Add(b))
+
+	// 10b: Decimal Series — exact values, no float rounding
+	prices := series.New([]types.Value{
+		types.Dec(types.NewDecimal(9999, 2)),  // 99.99
+		types.Dec(types.NewDecimal(1500, 2)),  // 15.00
+		types.Dec(types.NewDecimal(25000, 2)), // 250.00
+		types.Null(),                          // missing price
+	}, "price")
+
+	fmt.Println("Price series:")
+	fmt.Println(prices)
+
+	if d, ok := prices.ILoc(0).AsDecimal(); ok {
+		fmt.Printf("price[0]: %s  (kind: %s)\n\n", d, prices.ILoc(0).Kind)
+	}
+
+	// 10c: Aggregations — all stat operations work via ToFloat64
+	fmt.Println("Aggregations (nulls skipped automatically):")
+	fmt.Printf("  count: %d\n", prices.Count())
+	fmt.Printf("  sum:   %.2f\n", prices.Sum())
+	fmt.Printf("  mean:  %.2f\n", prices.Mean())
+	fmt.Printf("  min:   %.2f\n", prices.Min())
+	fmt.Printf("  max:   %.2f\n", prices.Max())
+	fmt.Printf("  std:   %.2f\n\n", prices.Std())
+
+	// 10d: Filtering
+	fmt.Println("Prices > 20.00:")
+	fmt.Println(prices.Filter(prices.Gt(20.00)))
+
+	// 10e: Sorting
+	catalog, err := dataframe.FromMap(map[string]interface{}{
+		"product": []string{"Keyboard", "Mouse", "Monitor"},
+		"price": []types.Value{
+			types.Dec(types.NewDecimal(7999, 2)),
+			types.Dec(types.NewDecimal(2999, 2)),
+			types.Dec(types.NewDecimal(39999, 2)),
+		},
+	}, []string{"product", "price"})
+	mustOk(err)
+
+	sorted, err := catalog.SortBy("price", true)
+	mustOk(err)
+	fmt.Println("Products sorted by price (ascending):")
+	fmt.Println(sorted)
+
+	// 10f: Describe — decimal columns included as numeric
+	desc, err := catalog.Describe()
+	mustOk(err)
+	fmt.Println("Describe:")
+	fmt.Println(desc)
+
+	// 10g: GroupBy with decimal aggregation
+	inventory, err := dataframe.FromMap(map[string]interface{}{
+		"category": []string{"Electronics", "Electronics", "Accessories"},
+		"price": []types.Value{
+			types.Dec(types.NewDecimal(39999, 2)),
+			types.Dec(types.NewDecimal(7999, 2)),
+			types.Dec(types.NewDecimal(2999, 2)),
+		},
+	}, []string{"category", "price"})
+	mustOk(err)
+
+	grouped, err := inventory.GroupBy("category", map[string]func(*series.Series) types.Value{
+		"price": func(s *series.Series) types.Value { return types.Float(s.Mean()) },
+	})
+	mustOk(err)
+	fmt.Println("Average price by category:")
+	fmt.Println(grouped)
+
+	// 10h: CSV write — decimal serialized as plain string (e.g. "79.99")
+	path := os.TempDir() + "/goframe_catalog.csv"
+	mustOk(goio.WriteCSVFile(catalog, path, nil))
+	loaded, err := goio.ReadCSVFile(path, nil)
+	mustOk(err)
+	v := loaded.MustCol("price").ILoc(0)
+	fmt.Printf("CSV round-trip: dtype=%s  value=%s\n", v.Kind, v)
 	fmt.Println()
 }
 
