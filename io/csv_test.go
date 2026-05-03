@@ -501,6 +501,33 @@ func TestReadCSV_DateTimeRoundTrip(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Decimal write/read-back via CSV
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestWriteCSV_Decimal(t *testing.T) {
+	s := series.New([]types.Value{
+		types.Dec(types.NewDecimal(1500, 2)),
+		types.Null(),
+		types.Dec(types.NewDecimal(99, 2)),
+	}, "price")
+	df, err := dataframe.New(map[string]*series.Series{"price": s}, []string{"price"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := goio.WriteCSV(df, &buf, &goio.WriteCSVOptions{NullValue: "NA"}); err != nil {
+		t.Fatalf("WriteCSV: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "15.00") {
+		t.Errorf("decimal not serialized correctly, got: %q", out)
+	}
+	if !strings.Contains(out, "NA") {
+		t.Errorf("null decimal should write as NA, got: %q", out)
+	}
+}
+
 func TestReadCSV_NoColsEmptyHeader(t *testing.T) {
 	// A CSV with just an empty header row and no data
 	df, err := goio.ReadCSV(strings.NewReader("\n"), nil)

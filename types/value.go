@@ -58,6 +58,10 @@ const (
 
 	// KindDateTime represents a date-time value (time.Time).
 	KindDateTime
+
+	// KindDecimal represents an exact decimal number using scaled integer arithmetic.
+	// Avoids floating-point rounding errors — ideal for financial and scientific data.
+	KindDecimal
 )
 
 // String returns a human-readable name for the Kind — used in error messages
@@ -76,6 +80,8 @@ func (k Kind) String() string {
 		return "bool"
 	case KindDateTime:
 		return "datetime64"
+	case KindDecimal:
+		return "decimal"
 	default:
 		return fmt.Sprintf("unknown(%d)", int(k))
 	}
@@ -85,13 +91,15 @@ func (k Kind) String() string {
 //
 // Memory layout:
 //
-//	Kind   int     (8 bytes)
-//	intVal int64   (8 bytes)
-//	fltVal float64 (8 bytes)
-//	strVal string  (16 bytes: pointer + length)
-//	boolVal bool   (1 byte, padded to 8)
-//	                ─────────────────────
-//	                ~49 bytes per Value
+//	Kind    int      (8 bytes)
+//	intVal  int64    (8 bytes)
+//	fltVal  float64  (8 bytes)
+//	strVal  string   (16 bytes: pointer + length)
+//	boolVal bool     (1 byte, padded to 8)
+//	timeVal time.Time (24 bytes)
+//	currVal Currency  (int64 + string header = ~32 bytes)
+//	                  ─────────────────────
+//	                  ~104 bytes per Value
 //
 // This is larger than a raw int64 (8 bytes) but much smaller than an
 // interface{} holding a boxed value (typically 16 bytes header + heap
@@ -109,6 +117,7 @@ type Value struct {
 	strVal  string
 	boolVal bool
 	timeVal time.Time
+	decVal  Decimal
 }
 
 // --- Constructors ---
@@ -146,6 +155,11 @@ func Bool(v bool) Value {
 // DateTime wraps a time.Time in a Value.
 func DateTime(v time.Time) Value {
 	return Value{Kind: KindDateTime, timeVal: v}
+}
+
+// Dec wraps a Decimal in a Value.
+func Dec(v Decimal) Value {
+	return Value{Kind: KindDecimal, decVal: v}
 }
 
 // --- Accessors ---
@@ -194,6 +208,14 @@ func (v Value) AsDateTime() (time.Time, bool) {
 	return v.timeVal, true
 }
 
+// AsDecimal returns the Decimal value and true if Kind == KindDecimal.
+func (v Value) AsDecimal() (Decimal, bool) {
+	if v.Kind != KindDecimal {
+		return Decimal{}, false
+	}
+	return v.decVal, true
+}
+
 // IsNull returns true if this Value represents missing data.
 func (v Value) IsNull() bool {
 	return v.Kind == KindNull
@@ -234,6 +256,8 @@ func (v Value) ToFloat64() (float64, error) {
 		return f, nil
 	case KindDateTime:
 		return float64(v.timeVal.Unix()), nil
+	case KindDecimal:
+		return v.decVal.ToFloat64(), nil
 	default:
 		return 0, fmt.Errorf("unknown Kind %d", v.Kind)
 	}
@@ -258,6 +282,8 @@ func (v Value) String() string {
 		return "false"
 	case KindDateTime:
 		return v.timeVal.Format(time.RFC3339)
+	case KindDecimal:
+		return v.decVal.String()
 	default:
 		return "<unknown>"
 	}
@@ -288,6 +314,8 @@ func (v Value) Equal(other Value) bool {
 		return v.boolVal == other.boolVal
 	case KindDateTime:
 		return v.timeVal.Equal(other.timeVal)
+	case KindDecimal:
+		return v.decVal.Equal(other.decVal)
 	}
 	return false
 }
@@ -317,6 +345,8 @@ func (v Value) LessThan(other Value) bool {
 		return !v.boolVal && other.boolVal
 	case KindDateTime:
 		return v.timeVal.Before(other.timeVal)
+	case KindDecimal:
+		return v.decVal.LessThan(other.decVal)
 	default:
 		panic(fmt.Sprintf("type %s is not orderable", v.Kind))
 	}

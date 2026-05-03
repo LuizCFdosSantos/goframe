@@ -23,6 +23,7 @@ func TestKindString(t *testing.T) {
 		{types.KindString, "object"},
 		{types.KindBool, "bool"},
 		{types.KindDateTime, "datetime64"},
+		{types.KindDecimal, "decimal"},
 		{types.Kind(99), "unknown(99)"},
 	}
 	for _, c := range cases {
@@ -377,6 +378,112 @@ func TestLessThan_DateTime(t *testing.T) {
 	}
 	if earlier.LessThan(earlier) {
 		t.Error("equal datetimes: LessThan should be false")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Decimal Value tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestDec(t *testing.T) {
+	d := types.NewDecimal(1500, 2) // 15.00
+	v := types.Dec(d)
+
+	if v.Kind != types.KindDecimal {
+		t.Errorf("Kind = %v, want KindDecimal", v.Kind)
+	}
+	got, ok := v.AsDecimal()
+	if !ok {
+		t.Fatal("AsDecimal() returned ok=false")
+	}
+	if !got.Equal(types.NewDecimal(1500, 2)) {
+		t.Errorf("AsDecimal() = %v, want 15.00", got)
+	}
+	if v.IsNull() {
+		t.Error("decimal value should not be null")
+	}
+
+	// wrong-kind accessors must return false
+	if _, ok := v.AsInt(); ok {
+		t.Error("decimal should not be accessible via AsInt")
+	}
+	if _, ok := v.AsFloat(); ok {
+		t.Error("decimal should not be accessible via AsFloat")
+	}
+	if _, ok := v.AsString(); ok {
+		t.Error("decimal should not be accessible via AsString")
+	}
+	if _, ok := v.AsBool(); ok {
+		t.Error("decimal should not be accessible via AsBool")
+	}
+	if _, ok := v.AsDateTime(); ok {
+		t.Error("decimal should not be accessible via AsDateTime")
+	}
+}
+
+func TestAsDecimal_WrongKind(t *testing.T) {
+	cases := []types.Value{
+		types.Null(), types.Int(1), types.Float(1.0), types.Str("1.5"), types.Bool(true),
+	}
+	for _, v := range cases {
+		if _, ok := v.AsDecimal(); ok {
+			t.Errorf("AsDecimal() on kind %v should return ok=false", v.Kind)
+		}
+	}
+}
+
+func TestToFloat64_Decimal(t *testing.T) {
+	v := types.Dec(types.NewDecimal(1550, 2)) // 15.50
+	f, err := v.ToFloat64()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if math.Abs(f-15.50) > 1e-9 {
+		t.Errorf("ToFloat64() = %f, want 15.50", f)
+	}
+}
+
+func TestValueString_Decimal(t *testing.T) {
+	cases := []struct {
+		v    types.Value
+		want string
+	}{
+		{types.Dec(types.NewDecimal(1500, 2)), "15.00"},
+		{types.Dec(types.NewDecimal(99, 2)), "0.99"},
+		{types.Dec(types.NewDecimal(0, 2)), "0.00"},
+	}
+	for _, c := range cases {
+		if got := c.v.String(); got != c.want {
+			t.Errorf("String() = %q, want %q", got, c.want)
+		}
+	}
+}
+
+func TestEqual_Decimal(t *testing.T) {
+	a := types.Dec(types.NewDecimal(1500, 2))
+	b := types.Dec(types.NewDecimal(1500, 2))
+	c := types.Dec(types.NewDecimal(999, 2))
+
+	if !a.Equal(b) {
+		t.Error("same decimal values should be equal")
+	}
+	if a.Equal(c) {
+		t.Error("different decimal values should not be equal")
+	}
+}
+
+func TestLessThan_Decimal(t *testing.T) {
+	low := types.Dec(types.NewDecimal(500, 2))
+	high := types.Dec(types.NewDecimal(1000, 2))
+
+	if !low.LessThan(high) {
+		t.Error("5.00 < 10.00 should be true")
+	}
+	if high.LessThan(low) {
+		t.Error("10.00 < 5.00 should be false")
+	}
+	if low.LessThan(low) {
+		t.Error("equal decimals: LessThan should be false")
 	}
 }
 

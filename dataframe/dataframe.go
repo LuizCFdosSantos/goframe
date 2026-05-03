@@ -582,7 +582,7 @@ func (df *DataFrame) Describe() (*DataFrame, error) {
 	for _, name := range df.colOrder {
 		col := df.columns[name]
 		dtype := col.Dtype()
-		if dtype == types.KindInt || dtype == types.KindFloat {
+		if dtype == types.KindInt || dtype == types.KindFloat || dtype == types.KindDecimal {
 			stats := []types.Value{
 				types.Float(float64(col.Count())),
 				types.Float(col.Mean()),
@@ -637,7 +637,7 @@ func (df *DataFrame) Corr() (*DataFrame, error) {
 	var numCols []string
 	for _, name := range df.colOrder {
 		d := df.columns[name].Dtype()
-		if d == types.KindInt || d == types.KindFloat {
+		if d == types.KindInt || d == types.KindFloat || d == types.KindDecimal {
 			numCols = append(numCols, name)
 		}
 	}
