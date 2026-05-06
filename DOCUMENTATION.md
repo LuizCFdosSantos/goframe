@@ -9,10 +9,11 @@ A pandas-inspired DataFrame library for Go. This document explains every compone
 1. [Project Overview](#project-overview)
 2. [Module & Dependencies](#module--dependencies)
 3. [types/value.go — The Value Type](#typesvaluego--the-value-type)
-4. [types/index.go — The Index Type](#typesindexgo--the-index-type)
-5. [types/types_test.go — Tests for types](#typestypes_testgo--tests-for-types)
-6. [series/series.go — The Series Type](#seriesserie sgo--the-series-type)
-7. [series/series_test.go & series_extra_test.go — Series Tests](#seriesseries_testgo--seriesseries_extra_testgo--series-tests)
+4. [types/column.go — The Column Interface](#typescolumngo--the-column-interface)
+5. [types/index.go — The Index Type](#typesindexgo--the-index-type)
+6. [types/types_test.go — Tests for types](#typestypes_testgo--tests-for-types)
+7. [series/series.go — The Series Type](#seriesseriesgo--the-series-type)
+8. [series/series_test.go & series_extra_test.go — Series Tests](#seriesseries_testgo--seriesseries_extra_testgo--series-tests)
 8. [dataframe/dataframe.go — The DataFrame Type](#dataframedataframego--the-dataframe-type)
 9. [dataframe/dataframe_test.go — DataFrame Tests](#dataframedataframe_testgo--dataframe-tests)
 10. [io/csv.go — CSV I/O](#iocsvgo--csv-io)
@@ -41,6 +42,10 @@ examples     ← runnable demonstrations
 ```
 
 Each layer only depends on layers below it, keeping the dependency graph acyclic and testable in isolation.
+
+The `types` layer now provides two storage abstractions:
+- `Value` — the public API type, a tagged union used at API boundaries.
+- `Column` — the internal storage interface, with typed implementations (`IntColumn`, `FloatColumn`, etc.) that store native Go slices instead of boxing every cell into a `Value`.
 
 ---
 
@@ -261,6 +266,92 @@ func (d Decimal) ToFloat64() float64   // approximate; for display and aggregati
 
 ---
 
+## types/column.go — The Column Interface
+
+**Package**: `types`
+
+### Purpose
+
+`Column` is the internal storage layer for a `Series`. Instead of storing every cell as a `Value` (104 bytes each), each `Column` implementation holds a single native Go slice — `[]int64`, `[]float64`, `[]string`, etc. — using only as much memory as the data actually requires.
+
+`Value` remains the **public API type**: `Get(i)` boxes on demand, but internal aggregation fast-paths bypass it entirely.
+
+### The Interface
+
+```go
+type Column interface {
+    Len() int
+    Get(i int) Value       // box only when the caller asks for it
+    IsNull(i int) bool
+    Dtype() Kind
+    Slice(start, end int) Column
+}
+```
+
+`Slice` shares the backing array — it is zero-copy. This makes `ILocRange`, `Head`, and `Tail` allocation-free for the data portion of the result.
+
+### Implementations
+
+| Type | Backing store | Bytes/row | Null tracking |
+|------|--------------|-----------|---------------|
+| `IntColumn` | `[]int64` | 8 | `[]bool` (nil when no nulls) |
+| `FloatColumn` | `[]float64` | 8 | `[]bool` |
+| `StringColumn` | `[]string` | 16 (header) | `[]bool` |
+| `BoolColumn` | `[]bool` | 1 | `[]bool` |
+| `DateTimeColumn` | `[]time.Time` | 24 | `[]bool` |
+| `DecimalColumn` | `[]Decimal` | ~32 | `[]bool` |
+| `GenericColumn` | `[]Value` | ~104 | implicit (Value.IsNull) |
+
+`GenericColumn` is the fallback for mixed-type or all-null columns. It behaves identically to the old `[]Value` storage.
+
+When a column has no null values, the `nulls []bool` field is `nil` and `IsNull` returns `false` in O(1) without an array access.
+
+### Construction
+
+```go
+// Inspect values and pick the most efficient Column type.
+col := types.NewColumn(vals []Value) Column
+
+// Direct constructors — bypass []Value boxing entirely.
+col := types.NewIntColumn(data []int64) Column
+col := types.NewFloatColumn(data []float64) Column
+col := types.NewStringColumn(data []string) Column
+```
+
+`NewColumn` scans the input slice once to detect the dominant type. If all non-null values share the same `Kind`, it allocates a typed array and copies the data in; otherwise it falls back to `GenericColumn`.
+
+### Typed Aggregation Methods
+
+`IntColumn` and `FloatColumn` expose methods that operate directly on the underlying slices — no boxing, no type switches in the inner loop:
+
+```go
+func (c *IntColumn) SumInt() (total int64, count int)
+func (c *IntColumn) MinMaxInt() (lo, hi int64, count int)
+
+func (c *FloatColumn) SumFloat() (total float64, count int)  // NaN-aware
+func (c *FloatColumn) MinMaxFloat() (lo, hi float64, count int)
+```
+
+`Series.Sum()`, `Mean()`, `Min()`, and `Max()` type-assert to these interfaces for a fast path:
+
+```go
+// In series.go — no Value boxing, no switch per element
+case *types.IntColumn:
+    total, count := col.SumInt()
+```
+
+### Memory Impact
+
+For a 1 million-row integer column:
+
+| Storage | Memory | Notes |
+|---------|--------|-------|
+| `[]Value` (old) | ~99 MB | 104 bytes × 1M |
+| `IntColumn` (new) | ~8 MB | 8 bytes × 1M + 0 (no nulls) |
+| `IntColumn` with nulls | ~9 MB | +1 byte/row for `[]bool` |
+
+---
+
 ## types/index.go — The Index Type
 
 **Package**: `types`
@@ -349,26 +440,26 @@ Tests cover:
 
 ### Purpose
 
-A `Series` is a one-dimensional labeled array — the equivalent of a pandas `Series` or a single column of a spreadsheet. It pairs a `[]Value` array with an `*Index` for row labels and a `string` name.
+A `Series` is a one-dimensional labeled array — the equivalent of a pandas `Series` or a single column of a spreadsheet. It pairs a typed `Column` with an `*Index` for row labels and a `string` name.
 
 ### Data Structure
 
 ```go
 type Series struct {
-    data  []types.Value
+    col   types.Column  // typed storage: IntColumn, FloatColumn, etc.
     index *types.Index
     name  string
 }
 ```
 
-The data and index always have the same length. This invariant is enforced by constructors and maintained by all operations — no method ever produces a Series where `len(data) != index.Len()`.
+`col` always has the same length as `index`. This invariant is enforced by constructors and maintained by all operations. The `Column` abstraction is an implementation detail — callers always work with `types.Value` through the public API (`ILoc`, `Loc`, `Values`, etc.).
 
 ### Constructors
 
 ```go
 func New(data []types.Value, name string) *Series
 ```
-Creates a Series with a default `RangeIndex` (0, 1, 2, …).
+Creates a Series with a default `RangeIndex` (0, 1, 2, …). Internally calls `types.NewColumn(data)` which inspects the values and picks the most memory-efficient backing (e.g., `IntColumn` for an all-integer slice).
 
 ```go
 func NewWithIndex(data []types.Value, idx *types.Index, name string) *Series
@@ -380,7 +471,7 @@ func FromInts(vals []int64, name string) *Series
 func FromFloats(vals []float64, name string) *Series
 func FromStrings(vals []string, name string) *Series
 ```
-Convenience constructors that convert Go slices to `[]Value` and create a RangeIndex.
+Convenience constructors that create typed columns **without boxing** through `[]Value`. `FromInts` produces an `IntColumn`, `FromFloats` a `FloatColumn`, `FromStrings` a `StringColumn` — the most efficient path for homogeneous data.
 
 ### Positional Access
 
@@ -394,7 +485,7 @@ Returns the value at integer position `i`. Supports negative indexing: `ILoc(-1)
 func (s *Series) ILocRange(start, end int) *Series
 ```
 
-Returns a slice of rows `[start, end)`. Both bounds are clamped to valid range so callers don't need to guard against boundary conditions. Returns a new Series with a subset index.
+Returns a slice of rows `[start, end)`. Uses `Column.Slice()` which shares the backing typed array — **no data is copied**. The result `Series` holds a view into the original column's memory. Only the `Index` slice is allocated.
 
 ### Label-Based Access
 
@@ -533,7 +624,7 @@ func (s *Series) Min() float64
 func (s *Series) Max() float64
 ```
 
-Operate over non-null numeric values (those for which `ToFloat64()` succeeds). Return 0 if there are no non-null numerics.
+Operate over non-null numeric values. For `IntColumn` and `FloatColumn`, these use typed fast paths (`SumInt`, `SumFloat`, `MinMaxInt`, `MinMaxFloat`) that loop over the raw native slice with no per-element boxing or type switch. Generic columns fall back to `ToFloat64()` per element. Return `math.NaN()` if there are no non-null numerics.
 
 ```go
 func (s *Series) Std() float64
@@ -1038,12 +1129,14 @@ The trade-off is additional memory allocation per operation. For a learning impl
 
 ### Columnar Storage
 
-Columns are stored as separate `[]Value` slices. This means:
-- Column access is O(1): `df.Col("salary")` returns a pointer immediately.
-- Column-wise operations (aggregations, transforms) are cache-friendly.
-- Row access requires gathering values from multiple slices.
+Columns are stored as separate typed arrays. Each `Series` holds a `Column` interface backed by a native Go slice (`[]int64`, `[]float64`, etc.) rather than `[]Value`. This means:
 
-Pandas/NumPy use columnar storage for the same reason.
+- Column access is O(1): `df.Col("salary")` returns a pointer immediately.
+- Numeric aggregations (`Sum`, `Mean`, `Min`, `Max`) iterate a contiguous typed array — no indirection, no type switches, CPU-cache friendly.
+- Mixed-type or all-null columns fall back to `GenericColumn` (`[]Value`), preserving correctness at the cost of efficiency.
+- Row access boxes values on demand via `Column.Get(i)`.
+
+Pandas/NumPy use the same columnar layout for the same performance reasons.
 
 ### Error Handling
 
@@ -1070,9 +1163,10 @@ The library follows SQL/pandas null semantics throughout:
 
 | Feature | goframe | pandas |
 |---------|---------|--------|
-| Storage | Row-oriented `[]Value` | NumPy columnar arrays |
+| Storage | Typed columnar (`IntColumn`, `FloatColumn`, …) | NumPy columnar arrays |
+| Numeric memory | ~8 bytes/row (typed) | ~8 bytes/row (numpy int64) |
 | Type system | 7 kinds (null, int, float, string, bool, datetime, decimal) | 20+ dtypes (int8…int64, datetime, category, …) |
-| Performance | Pure Go loops | SIMD via C/NumPy |
+| Performance | Pure Go loops, typed fast paths for aggregations | SIMD via C/NumPy |
 | Index alignment | Manual (not automatic) | Automatic on arithmetic |
 | DateTime support | `KindDateTime` (`time.Time`), CSV inference, RFC3339 serialization | Full datetime64 |
 | MultiIndex | Not implemented | Supported |
