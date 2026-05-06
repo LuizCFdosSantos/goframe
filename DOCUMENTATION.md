@@ -54,7 +54,7 @@ The `types` layer now provides two storage abstractions:
 **File**: `go.mod`
 
 ```
-module github.com/LuizCdosSantos/goframe
+module github.com/LuizCFdosSantos/goframe
 go 1.21
 ```
 

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/LuizCdosSantos/goframe/types"
+	"github.com/LuizCFdosSantos/goframe/types"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

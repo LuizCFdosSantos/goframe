@@ -29,7 +29,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LuizCdosSantos/goframe/types"
+	"github.com/LuizCFdosSantos/goframe/types"
 )
 
 // Series is a 1-dimensional labeled array capable of holding any goframe Value.
