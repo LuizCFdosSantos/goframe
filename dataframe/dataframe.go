@@ -33,8 +33,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LuizCdosSantos/goframe/series"
-	"github.com/LuizCdosSantos/goframe/types"
+	"github.com/LuizCFdosSantos/goframe/series"
+	"github.com/LuizCFdosSantos/goframe/types"
 )
 
 // DataFrame is a 2-dimensional labeled data structure.

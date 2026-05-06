@@ -13,11 +13,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/LuizCdosSantos/goframe/dataframe"
-	goio "github.com/LuizCdosSantos/goframe/io"
-	"github.com/LuizCdosSantos/goframe/ops"
-	"github.com/LuizCdosSantos/goframe/series"
-	"github.com/LuizCdosSantos/goframe/types"
+	"github.com/LuizCFdosSantos/goframe/dataframe"
+	goio "github.com/LuizCFdosSantos/goframe/io"
+	"github.com/LuizCFdosSantos/goframe/ops"
+	"github.com/LuizCFdosSantos/goframe/series"
+	"github.com/LuizCFdosSantos/goframe/types"
 )
 
 func main() {

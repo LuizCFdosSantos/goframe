@@ -4,9 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/LuizCdosSantos/goframe/dataframe"
-	"github.com/LuizCdosSantos/goframe/series"
-	"github.com/LuizCdosSantos/goframe/types"
+	"github.com/LuizCFdosSantos/goframe/dataframe"
+	"github.com/LuizCFdosSantos/goframe/series"
+	"github.com/LuizCFdosSantos/goframe/types"
 )
 
 // helpers
